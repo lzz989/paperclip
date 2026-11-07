@@ -232,6 +232,14 @@ describe("CloudAccessGate restart recovery", () => {
     await flushReact();
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.querySelector("[data-redirect]")?.getAttribute("data-redirect"))
-      .toBe("/auth?next=%2FCON%2Fagents%2Fconan%2Finstructions%3Ftab%3Dedit");
+      .toBe("/auth?next=%2FCON%2Fagents%2Fconan%2Finstructions%3Ftab%3Dedit%23draft");
+  });
+
+  it("starts the SSO sign-in path even when bootstrap is pending", async () => {
+    client.setQueryData(queryKeys.health, { status: "ok", deploymentMode: "authenticated", bootstrapStatus: "bootstrap_pending", vibelifeOidcEnabled: true });
+    client.setQueryData(queryKeys.auth.session, null);
+    await render();
+    expect(container.querySelector("[data-redirect]")?.getAttribute("data-redirect"))
+      .toBe("/auth?next=%2FCON%2Fagents%2Fconan%2Finstructions%3Ftab%3Dedit%23draft");
   });
 });

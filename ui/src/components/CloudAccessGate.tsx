@@ -177,6 +177,11 @@ export function CloudAccessGate({ allowMembershipRequest = false }: { allowMembe
     return <CloudSignIn cloud={healthQuery.data.cloud} returnTo={`${location.pathname}${location.search}${location.hash}`} />;
   }
 
+  if (isAuthenticatedMode && !sessionQuery.data && healthQuery.data?.vibelifeOidcEnabled) {
+    const next = encodeURIComponent(`${location.pathname}${location.search}${location.hash}`);
+    return <Navigate to={`/auth?next=${next}`} replace />;
+  }
+
   if (isBootstrapPending) {
     const health = healthQuery.data;
     if (!health) {
@@ -200,7 +205,7 @@ export function CloudAccessGate({ allowMembershipRequest = false }: { allowMembe
   }
 
   if (isAuthenticatedMode && !sessionQuery.data) {
-    const next = encodeURIComponent(`${location.pathname}${location.search}`);
+    const next = encodeURIComponent(`${location.pathname}${location.search}${location.hash}`);
     return <Navigate to={`/auth?next=${next}`} replace />;
   }
 

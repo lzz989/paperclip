@@ -34,6 +34,7 @@ export type HealthStatus = {
   deploymentExposure?: "private" | "public";
   localAiLoginSupported?: boolean;
   authReady?: boolean;
+  vibelifeOidcEnabled?: boolean;
   bootstrapStatus?: "ready" | "bootstrap_pending";
   bootstrapInviteActive?: boolean;
   /** The unclaimed Cloud app is ready; this response did not probe SQL. */

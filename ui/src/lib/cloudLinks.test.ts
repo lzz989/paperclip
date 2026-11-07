@@ -11,7 +11,7 @@ describe("cloudLinks", () => {
     },
   );
 
-  it.each(["https://evil.test", "//evil.test", "/\\evil.test", "/\n/evil.test", "/auth?next=/auth", "/auth/", "/a/../auth"])(
+  it.each(["https://evil.test", "//evil.test", "/\\evil.test", "/\n/evil.test", "/auth?next=/auth", "/auth/", "/a/../auth", "/a/..//evil.test", "/%2e%2e//evil.test", "/%2f%2fevil.test", "/%255c%255cevil.test", "/%61uth", "/AUTH", "/%zz"])(
     "rejects unsafe or recursive return targets: %j", (path) => {
       expect(tenantSignInReturnPath(path)).toBe("/");
     },

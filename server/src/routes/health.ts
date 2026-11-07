@@ -302,6 +302,7 @@ export function healthRoutes(
       res.json({
         status: healthStatus,
         deploymentMode: opts.deploymentMode,
+        vibelifeOidcEnabled: process.env.VIBELIFE_PAPERCLIP_OIDC === "enabled",
         deploymentExposure: opts.deploymentExposure,
         commit,
         warmStandby: true,
@@ -433,6 +434,7 @@ export function healthRoutes(
       serverVersion,
       commit,
       deploymentMode: opts.deploymentMode,
+      vibelifeOidcEnabled: process.env.VIBELIFE_PAPERCLIP_OIDC === "enabled",
       deploymentExposure: opts.deploymentExposure,
         localAiLoginSupported: supportsLocalAiLogin(opts),
       authReady: opts.authReady,

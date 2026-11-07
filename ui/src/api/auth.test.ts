@@ -10,6 +10,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("authApi.signInVibelife", () => {
+  it.each([
+    ["/CON/issues/CON-1?tab=activity#comment", "/CON/issues/CON-1?tab=activity#comment"],
+    ["/a/..//evil.test", "/"],
+    ["https://evil.test", "/"],
+  ])("uses fixed local success and failure callbacks for %s", async (input, expected) => {
+    const fetchMock = vi.fn(async (_path: string, _init: RequestInit) => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(authApi.signInVibelife(input)).rejects.toThrow();
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1].body));
+    for (const [key, marker] of [["callbackURL", "sso_done"], ["errorCallbackURL", "sso_error"]]) {
+      const url = new URL(body[key], "https://dashboard.majiu.xyz");
+      expect(url.origin).toBe("https://dashboard.majiu.xyz");
+      expect(url.pathname).toBe("/auth");
+      expect(url.searchParams.get("next")).toBe(expected);
+      expect(url.searchParams.get(marker)).toBe("1");
+    }
+  });
+});
+
 describe("authApi.getSession", () => {
   it("returns null for an ordinary local 401", async () => {
     const fetchMock = vi.fn().mockResolvedValue(

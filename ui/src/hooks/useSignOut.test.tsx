@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "@/lib/queryKeys";
 import { isAccountScopedQueryKey, useSignOut } from "./useSignOut";
+import { VIBELIFE_SSO_PAUSED_KEY } from "@/lib/vibelife-sign-in";
 
 const mockAuthApi = vi.hoisted(() => ({ signOut: vi.fn() }));
 const mockNavigateTopLevel = vi.hoisted(() => vi.fn());
@@ -30,6 +31,7 @@ describe("useSignOut", () => {
 
   beforeEach(() => {
     captured = null;
+    sessionStorage.clear();
     container = document.createElement("div");
     document.body.appendChild(container);
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -210,6 +212,7 @@ describe("useSignOut", () => {
     await vi.waitFor(() => expect(captured?.error?.message).toBe("Sign-out request failed"));
     expect(captured?.isPending).toBe(false);
     expect(onSignedOut).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(VIBELIFE_SSO_PAUSED_KEY)).toBeNull();
     // The account is still signed in, so its caches must survive intact —
     // a failed sign-out must not blank the app the user is still using.
     expect(queryClient.getQueryData(queryKeys.auth.session)).toEqual({ session: { id: "session-1" } });

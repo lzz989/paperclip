@@ -7,6 +7,7 @@ import {
 } from "@paperclipai/shared";
 import { redactUrlSecrets } from "@/lib/redact-url-secrets";
 import { tenantSessionRecovery } from "@/lib/tenant-session-recovery";
+import { tenantSignInReturnPath } from "@/lib/cloudLinks";
 import { readApiJson } from "./response";
 
 type AuthErrorBody =
@@ -152,6 +153,17 @@ async function authPatch<T>(path: string, body: Record<string, unknown>, parse: 
 }
 
 export const authApi = {
+  signInVibelife: async (callbackURL: string): Promise<void> => {
+    const next = tenantSignInReturnPath(callbackURL);
+    const successURL = `/auth?${new URLSearchParams({ next, sso_done: "1" })}`;
+    const errorCallbackURL = `/auth?${new URLSearchParams({ next, sso_error: "1" })}`;
+    const result = await authPost("/sign-in/social", { provider: "vibelife", callbackURL: successURL, errorCallbackURL, disableRedirect: true });
+    const url = result && typeof result === "object" && "url" in result ? (result as { url?: unknown }).url : null;
+    if (typeof url !== "string") throw new Error("统一登录暂时不可用。");
+    const target = new URL(url);
+    if (target.origin !== "https://vibelife.majiu.xyz" || target.pathname !== "/sso/auth") throw new Error("统一登录地址不正确。");
+    window.location.assign(target.href);
+  },
   getSession: async (): Promise<AuthSession | null> => {
     const res = await fetch("/api/auth/get-session", {
       credentials: "include",

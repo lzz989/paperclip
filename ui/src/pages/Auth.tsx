@@ -6,6 +6,7 @@ import { healthApi } from "../api/health";
 import { CloudSignIn } from "@/components/CloudSignIn";
 import { clearCloudSignInAttempt } from "@/lib/cloud-sign-in";
 import { tenantSignInReturnPath } from "@/lib/cloudLinks";
+import { VIBELIFE_SSO_ATTEMPT_KEY, VIBELIFE_SSO_PAUSED_KEY } from "@/lib/vibelife-sign-in";
 import { queryKeys } from "../lib/queryKeys";
 import { getRememberedInvitePath } from "../lib/invite-memory";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,9 @@ export function AuthPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    searchParams.get("sso_error") === "1" || searchParams.get("sso_done") === "1" ? "统一登录未完成，请重试。" : null,
+  );
   const errorId = "auth-error";
 
   const nextPath = useMemo(
@@ -44,10 +47,20 @@ export function AuthPage() {
 
   useEffect(() => {
     if (session) {
+      try { sessionStorage.removeItem(VIBELIFE_SSO_ATTEMPT_KEY); } catch { /* unavailable */ }
       clearCloudSignInAttempt();
       navigate(nextPath, { replace: true });
     }
   }, [session, navigate, nextPath]);
+
+  useEffect(() => {
+    if (!healthQuery.data?.vibelifeOidcEnabled || healthQuery.error || healthQuery.data.cloud || isSessionLoading || session || sessionError || searchParams.get("sso_error") === "1" || searchParams.get("sso_done") === "1") return;
+    try {
+      if (sessionStorage.getItem(VIBELIFE_SSO_PAUSED_KEY) || sessionStorage.getItem(VIBELIFE_SSO_ATTEMPT_KEY)) return;
+      sessionStorage.setItem(VIBELIFE_SSO_ATTEMPT_KEY, "1");
+    } catch { return; } // Without the loop guard the automatic flow fails closed.
+    void authApi.signInVibelife(nextPath).catch(() => setError("统一登录暂时不可用，请重试。"));
+  }, [healthQuery.data, healthQuery.error, isSessionLoading, session, sessionError, nextPath, searchParams]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -119,6 +132,16 @@ export function AuthPage() {
               ? "Use your email and password to access this instance."
               : "Create an account for this instance. Email confirmation is not required in v1."}
           </p>
+
+          {healthQuery.data?.vibelifeOidcEnabled ? (
+            <Button type="button" className="mt-6 w-full" onClick={() => {
+              try {
+                sessionStorage.setItem(VIBELIFE_SSO_ATTEMPT_KEY, "1");
+                sessionStorage.removeItem(VIBELIFE_SSO_PAUSED_KEY);
+              } catch { /* manual login remains available */ }
+              void authApi.signInVibelife(nextPath).catch(() => setError("统一登录暂时不可用，请重试。"));
+            }}>使用 VibeLife 统一登录</Button>
+          ) : null}
 
           <form
             className="mt-6 space-y-4"

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/api/auth";
 import { navigateTopLevel } from "@/lib/browserNavigation";
 import { queryKeys } from "@/lib/queryKeys";
+import { VIBELIFE_SSO_PAUSED_KEY } from "@/lib/vibelife-sign-in";
 import { useCloudInstance } from "./useCloudInstance";
 
 const CLOUD_SIGN_OUT_PATH = "/cloud/logout";
@@ -53,6 +54,8 @@ export function useSignOut({ onSignedOut }: UseSignOutOptions = {}) {
       }
 
       await authApi.signOut();
+      // This must precede onSignedOut and the session-cache reset that opens /auth.
+      try { sessionStorage.setItem(VIBELIFE_SSO_PAUSED_KEY, "1"); } catch { /* automatic SSO fails closed without storage */ }
       return "self-hosted" as const;
     },
     onSuccess: async (target) => {

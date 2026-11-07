@@ -3,18 +3,25 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "../lib/queryKeys";
 import { AuthPage } from "./Auth";
+import { CloudAccessGate } from "@/components/CloudAccessGate";
+import { useSignOut } from "@/hooks/useSignOut";
+import { VIBELIFE_SSO_ATTEMPT_KEY, VIBELIFE_SSO_PAUSED_KEY } from "@/lib/vibelife-sign-in";
 
 const getSessionMock = vi.hoisted(() => vi.fn());
 const signInEmailMock = vi.hoisted(() => vi.fn());
 const signUpEmailMock = vi.hoisted(() => vi.fn());
+const signInVibelifeMock = vi.hoisted(() => vi.fn());
+const signOutMock = vi.hoisted(() => vi.fn());
+const boardAccessMock = vi.hoisted(() => vi.fn());
 const healthMock = vi.hoisted(() => vi.fn());
 const beginCloudSignInMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/health", () => ({ healthApi: { get: () => healthMock() } }));
+vi.mock("@/api/access", () => ({ accessApi: { getCurrentBoardAccess: () => boardAccessMock() } }));
 vi.mock("@/lib/cloud-sign-in", () => ({
   beginCloudSignIn: (url: string) => beginCloudSignInMock(url),
   clearCloudSignInAttempt: vi.fn(),
@@ -25,6 +32,8 @@ vi.mock("../api/auth", () => ({
     getSession: () => getSessionMock(),
     signInEmail: (input: unknown) => signInEmailMock(input),
     signUpEmail: (input: unknown) => signUpEmailMock(input),
+    signInVibelife: (path: string) => signInVibelifeMock(path),
+    signOut: () => signOutMock(),
   },
 }));
 
@@ -87,6 +96,16 @@ function renderAuthPage(container: HTMLElement) {
   return { root, queryClient };
 }
 
+function LocationMarker() {
+  const location = useLocation();
+  return <div data-location={`${location.pathname}${location.search}${location.hash}`} />;
+}
+
+function SignOutHarness() {
+  const signOut = useSignOut();
+  return <button type="button" onClick={() => signOut.mutate()}>Sign out</button>;
+}
+
 describe("AuthPage", () => {
   let container: HTMLDivElement;
 
@@ -98,6 +117,10 @@ describe("AuthPage", () => {
     beginCloudSignInMock.mockReturnValue(true);
     signInEmailMock.mockResolvedValue(undefined);
     signUpEmailMock.mockResolvedValue(undefined);
+    signInVibelifeMock.mockResolvedValue(undefined);
+    signOutMock.mockResolvedValue(null);
+    boardAccessMock.mockResolvedValue({ isInstanceAdmin: true, companyIds: [] });
+    sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -114,6 +137,10 @@ describe("AuthPage", () => {
           <QueryClientProvider client={queryClient}>
             <Routes>
               <Route path="/auth" element={<AuthPage />} />
+              <Route element={<CloudAccessGate />}>
+                <Route path="/" element={<SignOutHarness />} />
+              </Route>
+              <Route path="*" element={<LocationMarker />} />
             </Routes>
           </QueryClientProvider>
         </MemoryRouter>,
@@ -123,6 +150,75 @@ describe("AuthPage", () => {
     await flushReact();
     return { root, queryClient };
   }
+
+  it("pauses automatic SSO across sign-out, then permits manual login without a failure loop", async () => {
+    let signedIn = true;
+    let pauseAtCacheReset: string | null = null;
+    const session = { session: { id: "s", userId: "u" }, user: { id: "u" } };
+    getSessionMock.mockImplementation(async () => signedIn ? session : null);
+    signOutMock.mockImplementation(async () => { signedIn = false; });
+    signInVibelifeMock.mockRejectedValue(new Error("synthetic failure"));
+    healthMock.mockResolvedValue({ status: "ok", deploymentMode: "authenticated", bootstrapStatus: "ready", vibelifeOidcEnabled: true });
+    const { root, queryClient } = await mount("/");
+    const reset = queryClient.resetQueries.bind(queryClient);
+    vi.spyOn(queryClient, "resetQueries").mockImplementation((...args) => {
+      pauseAtCacheReset = sessionStorage.getItem(VIBELIFE_SSO_PAUSED_KEY);
+      return reset(...args);
+    });
+    await vi.waitFor(() => expect(container.textContent).toContain("Sign out"));
+    const button = Array.from(container.querySelectorAll("button")).find((element) => element.textContent === "Sign out");
+    expect(button).toBeDefined();
+    await act(() => button!.click());
+    await vi.waitFor(() => expect(container.textContent).toContain("使用 VibeLife 统一登录"));
+    expect(pauseAtCacheReset).toBe("1");
+    expect(signInVibelifeMock).not.toHaveBeenCalled();
+    const manual = Array.from(container.querySelectorAll("button")).find((element) => element.textContent === "使用 VibeLife 统一登录");
+    await act(() => manual!.click());
+    await vi.waitFor(() => expect(container.textContent).toContain("统一登录暂时不可用"));
+    expect(sessionStorage.getItem(VIBELIFE_SSO_PAUSED_KEY)).toBeNull();
+    expect(sessionStorage.getItem(VIBELIFE_SSO_ATTEMPT_KEY)).toBe("1");
+    expect(signInVibelifeMock).toHaveBeenCalledTimes(1);
+    await act(() => root.unmount());
+    const retry = await mount("/auth?sso_error=1&next=%2F");
+    expect(signInVibelifeMock).toHaveBeenCalledTimes(1);
+    await act(() => retry.root.unmount());
+  });
+
+  it("starts SSO once with the original safe path", async () => {
+    healthMock.mockResolvedValue({ status: "ok", deploymentMode: "authenticated", vibelifeOidcEnabled: true });
+    const { root } = await mount("/auth?next=%2FCON%2Fissues%2FCON-1%3Ftab%3Dactivity%23comment");
+    await vi.waitFor(() => expect(signInVibelifeMock).toHaveBeenCalledWith("/CON/issues/CON-1?tab=activity#comment"));
+    expect(signInVibelifeMock).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem("vibelife.paperclip-sso-attempt")).toBe("1");
+    await act(() => root.unmount());
+  });
+
+  it.each(["sso_error", "sso_done"])("does not retry automatically after %s without a session", async (marker) => {
+    healthMock.mockResolvedValue({ status: "ok", deploymentMode: "authenticated", vibelifeOidcEnabled: true });
+    const { root } = await mount(`/auth?${marker}=1`);
+    expect(signInVibelifeMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("统一登录未完成");
+    await act(() => root.unmount());
+  });
+
+  it("does not start another automatic attempt after returning without a session", async () => {
+    healthMock.mockResolvedValue({ status: "ok", deploymentMode: "authenticated", vibelifeOidcEnabled: true });
+    sessionStorage.setItem("vibelife.paperclip-sso-attempt", "1");
+    const { root } = await mount("/auth?next=%2FCON%2Fdashboard");
+    expect(signInVibelifeMock).not.toHaveBeenCalled();
+    await act(() => root.unmount());
+  });
+
+  it("clears the attempt after a successful callback and restores the target", async () => {
+    healthMock.mockResolvedValue({ status: "ok", deploymentMode: "authenticated", vibelifeOidcEnabled: true });
+    getSessionMock.mockResolvedValue({ session: { id: "s", userId: "u" }, user: { id: "u" } });
+    sessionStorage.setItem("vibelife.paperclip-sso-attempt", "1");
+    const { root } = await mount("/auth?sso_done=1&next=%2FCON%2Fissues%2FCON-1%3Ftab%3Dactivity%23comment");
+    await vi.waitFor(() => expect(container.querySelector("[data-location]")?.getAttribute("data-location")).toBe("/CON/issues/CON-1?tab=activity#comment"));
+    expect(sessionStorage.getItem("vibelife.paperclip-sso-attempt")).toBeNull();
+    expect(signInVibelifeMock).not.toHaveBeenCalled();
+    await act(() => root.unmount());
+  });
 
   it.each(["https://my.paperclip.app", "https://my-staging.paperclip.app"])("recovers Cloud auth through %s without rendering an instance form", async (origin) => {
     healthMock.mockResolvedValue({ cloud: { managed: true, managedBy: "paperclip-cloud", cloudBaseUrl: origin, stackSlug: "team" } });

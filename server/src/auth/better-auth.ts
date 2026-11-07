@@ -3,12 +3,16 @@ import type { IncomingHttpHeaders } from "node:http";
 import { betterAuth, type Auth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { toNodeHandler } from "better-auth/node";
+import { genericOAuth } from "better-auth/plugins";
+import { and, eq } from "drizzle-orm";
+import { vibelifeOidcConfig, VIBELIFE_ISSUER, VIBELIFE_SUBJECT } from "./vibelife-oidc.js";
 import type { Db } from "@paperclipai/db";
 import {
   authAccounts,
   authSessions,
   authUsers,
   authVerifications,
+  instanceUserRoles,
 } from "@paperclipai/db";
 import type { Config } from "../config.js";
 import { resolvePaperclipInstanceId } from "../home-paths.js";
@@ -239,7 +243,24 @@ export function resolveWorkspaceHandoffIdentity(
 }
 
 export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins: string[]): BetterAuthInstance {
+  const vibelifeOidc = vibelifeOidcConfig(async () => {
+    const rows = await db.select({ id: authAccounts.id }).from(authAccounts)
+      .innerJoin(authUsers, eq(authUsers.id, authAccounts.userId))
+      .innerJoin(instanceUserRoles, and(
+        eq(instanceUserRoles.userId, authUsers.id),
+        eq(instanceUserRoles.role, "instance_admin"),
+      ))
+      .where(and(
+        eq(authAccounts.issuer, VIBELIFE_ISSUER),
+        eq(authAccounts.accountId, VIBELIFE_SUBJECT),
+        eq(authAccounts.providerId, "vibelife"),
+      )).limit(1);
+    return rows.length === 1;
+  });
   const baseUrl = config.authBaseUrlMode === "explicit" ? config.authPublicBaseUrl : undefined;
+  if (vibelifeOidc && (config.deploymentMode !== "authenticated" || baseUrl !== "https://dashboard.majiu.xyz")) {
+    throw new Error("VibeLife OIDC requires authenticated mode and the exact dashboard auth base URL");
+  }
   const publicUrl = process.env.PAPERCLIP_PUBLIC_URL?.trim() || baseUrl;
   const managedRuntimePublicUrl = process.env.PAPERCLIP_MANAGED_RUNTIME_PUBLIC_URL?.trim() || undefined;
   const secret = process.env.BETTER_AUTH_SECRET ?? process.env.PAPERCLIP_AGENT_JWT_SECRET;
@@ -275,6 +296,7 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins:
       requireEmailVerification: false,
       disableSignUp: config.authDisableSignUp,
     },
+    ...(vibelifeOidc ? { account: { accountLinking: { enabled: false, disableImplicitLinking: true } } } : {}),
     rateLimit: buildBetterAuthRateLimitOptions({
       deploymentMode: config.deploymentMode,
       deploymentExposure: config.deploymentExposure,
@@ -284,9 +306,10 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins:
     // Registered only for a managed workspace instance: the plugin is what makes
     // `Open workspace` password-independent, and a control-plane instance that
     // was never handed a workspace key must not expose the exchange at all.
-    ...(resolveWorkspaceHandoffIdentity(config)
-      ? {
-          plugins: [
+    plugins: [
+      ...(vibelifeOidc ? [genericOAuth({ config: [vibelifeOidc] })] : []),
+      ...(resolveWorkspaceHandoffIdentity(config)
+      ? [
             workspaceLoginHandoffPlugin({
               db,
               // Re-resolved per exchange so a hot restart cannot keep validating
@@ -300,9 +323,9 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins:
                   origin: null,
                 },
             }),
-          ],
-        }
-      : {}),
+          ]
+      : []),
+    ],
   };
 
   if (!baseUrl) {

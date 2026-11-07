@@ -33,9 +33,19 @@ export function cloudStackCreateUrl(cloudBaseUrl: string | null | undefined): st
 /** Keep auth return targets inside the tenant, and never return to the login form. */
 export function tenantSignInReturnPath(path: string): string {
   if (!path.startsWith("/") || path.startsWith("//") || /[\\\x00-\x20]/.test(path)) return "/";
-  const url = new URL(path, "https://tenant.invalid");
-  if (url.pathname.replace(/\/+$/, "") === "/auth") return "/";
-  return `${url.pathname}${url.search}${url.hash}`;
+  try {
+    const url = new URL(path, "https://tenant.invalid");
+    // Reject nested escaping and validate the decoded, normalized path too.
+    if (/%25/i.test(url.pathname)) return "/";
+    const decoded = decodeURIComponent(url.pathname);
+    if (/[\\\x00-\x20]/.test(decoded)) return "/";
+    const normalized = new URL(decoded, "https://tenant.invalid");
+    if (url.pathname.startsWith("//") || decoded.startsWith("//") || normalized.origin !== "https://tenant.invalid" || normalized.pathname.startsWith("//")) return "/";
+    if (normalized.pathname.replace(/\/+$/, "").toLowerCase() === "/auth") return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
 }
 
 /** Cloud renews a tenant session here, or starts its own sign-in flow. */
